@@ -268,7 +268,7 @@ class Block(nn.Module):
         h = self.ln_2(n + m)
 
         outputs = [h] + attn_outputs[1:]
-        return outputs
+        return tuple(outputs)
 
 
 class OpenAIGPTPreTrainedModel(PreTrainedModel):
@@ -420,6 +420,9 @@ class OpenAIGPTModel(OpenAIGPTPreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         self.tokens_embed = new_embeddings
 
+    def get_layers(self):
+        return self.h
+
     def _prune_heads(self, heads_to_prune):
         """Prunes heads of the model.
         heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
@@ -446,11 +449,11 @@ class OpenAIGPTModel(OpenAIGPTPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
+        output_attentions = torch.tensor(output_attentions if output_attentions is not None else self.config.output_attentions)
+        output_hidden_states = torch.tensor(
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = torch.tensor(return_dict if return_dict is not None else self.config.use_return_dict)
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
@@ -505,7 +508,8 @@ class OpenAIGPTModel(OpenAIGPTPreTrainedModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states.view(*output_shape),)
 
-            outputs = block(hidden_states, attention_mask, head_mask[i], output_attentions=output_attentions)
+            layer_head_mask = head_mask[i] if head_mask is not None else None
+            outputs = block(hidden_states, attention_mask, layer_head_mask, output_attentions)
             hidden_states = outputs[0]
             if output_attentions:
                 all_attentions = all_attentions + (outputs[1],)
