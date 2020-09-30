@@ -641,7 +641,7 @@ class GPT2Model(GPT2PreTrainedModel):
             )
 
             hidden_states, present = outputs[:2]
-            if use_cache is True:
+            if use_cache:
                 presents = presents + (present,)
 
             if output_attentions:
