@@ -227,7 +227,7 @@ class Attention(nn.Module):
             key = torch.cat((past_key, key), dim=-1)
             value = torch.cat((past_value, value), dim=-2)
 
-        if use_cache is True:
+        if use_cache:
             present = torch.stack((key.transpose(-2, -1), value))  # transpose to have same shapes for stacking
         else:
             present = (None,)
@@ -317,7 +317,7 @@ class Block(nn.Module):
         # residual connection
         hidden_states = hidden_states + feed_forward_hidden_states
 
-        outputs = [hidden_states] + outputs
+        outputs = (hidden_states,) + tuple(outputs)
         return outputs  # hidden_states, present, (cross_attentions, attentions)
 
 
@@ -495,6 +495,9 @@ class GPT2Model(GPT2PreTrainedModel):
     def set_input_embeddings(self, new_embeddings):
         self.wte = new_embeddings
 
+    def get_layers(self):
+        return self.h
+
     def _prune_heads(self, heads_to_prune):
         """Prunes heads of the model.
         heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
@@ -534,12 +537,12 @@ class GPT2Model(GPT2PreTrainedModel):
             past_key_values = kwargs.pop("past")
         assert kwargs == {}, f"Unexpected keyword arguments: {list(kwargs.keys())}."
 
-        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
+        output_attentions = torch.tensor(output_attentions if output_attentions is not None else self.config.output_attentions)
+        output_hidden_states = torch.tensor(
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
-        use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        use_cache = torch.tensor(use_cache if use_cache is not None else self.config.use_cache)
+        return_dict = torch.tensor(return_dict if return_dict is not None else self.config.use_return_dict)
 
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
@@ -623,35 +626,17 @@ class GPT2Model(GPT2PreTrainedModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states.view(*output_shape),)
 
-            if getattr(self.config, "gradient_checkpointing", False):
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # checkpointing only works with tuple returns, not with lists
-                        return tuple(output for output in module(*inputs, use_cache, output_attentions))
-
-                    return custom_forward
-
-                outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    hidden_states,
-                    layer_past,
-                    attention_mask,
-                    head_mask[i],
-                    encoder_hidden_states,
-                    encoder_attention_mask,
-                )
-            else:
-                outputs = block(
-                    hidden_states,
-                    layer_past=layer_past,
-                    attention_mask=attention_mask,
-                    head_mask=head_mask[i],
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_attention_mask=encoder_attention_mask,
-                    use_cache=use_cache,
-                    output_attentions=output_attentions,
-                )
+            layer_head_mask = head_mask[i] if head_mask is not None else None
+            outputs = block(
+                hidden_states,
+                layer_past,
+                attention_mask,
+                layer_head_mask,
+                encoder_hidden_states,
+                encoder_attention_mask,
+                use_cache,
+                output_attentions
+            )
 
             hidden_states, present = outputs[:2]
             if use_cache is True:
@@ -663,6 +648,7 @@ class GPT2Model(GPT2PreTrainedModel):
         hidden_states = self.ln_f(hidden_states)
 
         hidden_states = hidden_states.view(*output_shape)
+
         # Add last hidden state
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
