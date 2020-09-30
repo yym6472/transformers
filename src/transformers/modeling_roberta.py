@@ -397,15 +397,14 @@ class RobertaEncoder(nn.Module):
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
             layer_head_mask = head_mask[i] if head_mask is not None else None
-            layer_outputs = torch.utils.checkpoint.checkpoint(
-                create_custom_forward(layer_module),
+            layer_outputs = layer_module(
                 hidden_states,
                 attention_mask,
                 layer_head_mask,
                 encoder_hidden_states,
                 encoder_attention_mask,
+                output_attentions,
             )
-
             hidden_states = layer_outputs[0]
             if output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
