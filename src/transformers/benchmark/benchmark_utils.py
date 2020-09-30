@@ -82,7 +82,7 @@ def separate_process_wrapper_fn(func: Callable[[], None], do_multi_processing: b
                 result = func(*args)
             except Exception as e:
                 logger.error(e)
-                print(e)
+                print("WTF", e)
                 result = "N/A"
             queue.put(result)
 

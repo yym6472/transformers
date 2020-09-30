@@ -366,7 +366,6 @@ class ModuleUtilsMixin:
         return 6 * self.estimate_tokens(input_dict) * self.num_parameters(exclude_embeddings=exclude_embeddings)
 
 
-
 class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
     r"""
     Base class for all models.

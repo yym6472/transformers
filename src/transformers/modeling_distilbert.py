@@ -324,9 +324,7 @@ class Transformer(nn.Module):
                 all_hidden_states = all_hidden_states + (hidden_state,)
 
             layer_head_mask = head_mask[i] if head_mask is not None else None
-            layer_outputs = layer_module(
-                hidden_state, attn_mask, layer_head_mask, output_attentions
-            )
+            layer_outputs = layer_module(hidden_state, attn_mask, layer_head_mask, output_attentions)
             hidden_state = layer_outputs[-1]
 
             if output_attentions:
@@ -475,7 +473,9 @@ class DistilBertModel(DistilBertPreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
     ):
-        output_attentions = torch.tensor(output_attentions if output_attentions is not None else self.config.output_attentions)
+        output_attentions = torch.tensor(
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = torch.tensor(
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )

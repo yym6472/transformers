@@ -537,7 +537,9 @@ class GPT2Model(GPT2PreTrainedModel):
             past_key_values = kwargs.pop("past")
         assert kwargs == {}, f"Unexpected keyword arguments: {list(kwargs.keys())}."
 
-        output_attentions = torch.tensor(output_attentions if output_attentions is not None else self.config.output_attentions)
+        output_attentions = torch.tensor(
+            output_attentions if output_attentions is not None else self.config.output_attentions
+        )
         output_hidden_states = torch.tensor(
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
@@ -635,7 +637,7 @@ class GPT2Model(GPT2PreTrainedModel):
                 encoder_hidden_states,
                 encoder_attention_mask,
                 use_cache,
-                output_attentions
+                output_attentions,
             )
 
             hidden_states, present = outputs[:2]

@@ -24,6 +24,8 @@ from .test_modeling_common import ModelTesterMixin, ids_tensor, random_attention
 
 
 if is_torch_available():
+    import torch
+
     from transformers import (
         AlbertConfig,
         AlbertForMaskedLM,
@@ -34,7 +36,6 @@ if is_torch_available():
         AlbertForTokenClassification,
         AlbertModel,
     )
-    import torch
     from transformers.modeling_albert import ALBERT_PRETRAINED_MODEL_ARCHIVE_LIST
 
 
@@ -287,8 +288,7 @@ class AlbertModelTest(ModelTesterMixin, unittest.TestCase):
             outputs_with_checkpointing = model_with_gc(**self._prepare_for_class(inputs_dict, model_class))
 
             for output_no_checkpointing, output_with_checkpointing in zip(
-                    outputs_no_checkpointing, outputs_with_checkpointing
+                outputs_no_checkpointing, outputs_with_checkpointing
             ):
                 if isinstance(output_with_checkpointing, torch.Tensor):
                     self.assertTrue(torch.allclose(output_no_checkpointing, output_with_checkpointing))
-
