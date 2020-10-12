@@ -754,6 +754,9 @@ if is_tf_available():
     # Trainer
     from .trainer_tf import TFTrainer
 
+if is_flax_available():
+    from .modeling_flax_bert import FlaxBertModel
+    from .modeling_flax_roberta import FlaxRobertaModel
 
 if not is_tf_available() and not is_torch_available():
     logger.warning(
