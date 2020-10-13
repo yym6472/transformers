@@ -126,6 +126,8 @@ class SummarizationModule(BaseTransformer):
         return readable_batch
 
     def forward(self, input_ids, **kwargs):
+        assert "user_mask" in kwargs
+        assert "seg_mask" in kwargs
         return self.model(input_ids, **kwargs)
 
     def ids_to_clean_text(self, generated_ids: List[int]):
@@ -136,7 +138,7 @@ class SummarizationModule(BaseTransformer):
 
     def _step(self, batch: dict) -> Tuple:
         pad_token_id = self.tokenizer.pad_token_id
-        src_ids, src_mask = batch["input_ids"], batch["attention_mask"]
+        src_ids, src_mask, user_mask, seg_mask = batch["input_ids"], batch["attention_mask"], batch["user_mask"], batch["seg_mask"]
         tgt_ids = batch["labels"]
         if isinstance(self.model, T5ForConditionalGeneration):
             decoder_input_ids = self.model._shift_right(tgt_ids)
@@ -146,7 +148,7 @@ class SummarizationModule(BaseTransformer):
             batch["decoder_input_ids"] = decoder_input_ids
             self.save_readable_batch(batch)
 
-        outputs = self(src_ids, attention_mask=src_mask, decoder_input_ids=decoder_input_ids, use_cache=False)
+        outputs = self(src_ids, attention_mask=src_mask, user_mask=user_mask, seg_mask=seg_mask, decoder_input_ids=decoder_input_ids, use_cache=False)
         lm_logits = outputs[0]
         if self.hparams.label_smoothing == 0:
             # Same behavior as modeling_bart.py, besides ignoring pad_token_id

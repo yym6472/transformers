@@ -44,6 +44,8 @@ from .modeling_outputs import (
 from .modeling_utils import PreTrainedModel
 from .utils import logging
 
+from att_all_need.Layers import EncoderLayer as ExtraMaskLayer
+
 
 logger = logging.get_logger(__name__)
 
@@ -885,6 +887,8 @@ class BartModel(PretrainedBartModel):
         self.shared = nn.Embedding(vocab_size, config.d_model, padding_idx)
 
         self.encoder = BartEncoder(config, self.shared)
+        self.extra_mask_layer = ExtraMaskLayer(config.d_model, config.d_model * 4, config.encoder_attention_heads,
+                config.d_model // config.encoder_attention_heads, config.d_model // config.encoder_attention_heads)
         self.decoder = BartDecoder(config, self.shared)
 
         self.init_weights()
@@ -900,6 +904,8 @@ class BartModel(PretrainedBartModel):
         self,
         input_ids,
         attention_mask=None,
+        user_mask=None,
+        seg_mask=None,
         decoder_input_ids=None,
         decoder_attention_mask=None,
         encoder_outputs: Optional[Tuple] = None,
@@ -956,6 +962,10 @@ class BartModel(PretrainedBartModel):
                 hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
                 attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
             )
+
+        if user_mask is not None and seg_mask is not None:
+            other_user_mask = (user_mask == 0).to(dtype=user_mask.dtype) * attention_mask
+            encoder_outputs = self.extra_mask_layer(encoder_outputs[0], attention_mask, seg_mask, user_mask, other_user_mask)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
@@ -1031,6 +1041,8 @@ class BartForConditionalGeneration(PretrainedBartModel):
         self,
         input_ids,
         attention_mask=None,
+        user_mask=None,
+        seg_mask=None,
         decoder_input_ids=None,
         decoder_attention_mask=None,
         encoder_outputs=None,
@@ -1097,6 +1109,8 @@ class BartForConditionalGeneration(PretrainedBartModel):
         outputs = self.model(
             input_ids,
             attention_mask=attention_mask,
+            user_mask=user_mask,
+            seg_mask=seg_mask,
             decoder_input_ids=decoder_input_ids,
             encoder_outputs=encoder_outputs,
             decoder_attention_mask=decoder_attention_mask,

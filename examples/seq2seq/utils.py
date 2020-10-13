@@ -241,10 +241,23 @@ class Seq2SeqDataset(AbstractSeq2SeqDataset):
     def __getitem__(self, index) -> Dict[str, str]:
         index = index + 1  # linecache starts at 1
         source_line = self.prefix + linecache.getline(str(self.src_file), index).rstrip("\n")
+        who_says = self.get_who_says(source_line)
         tgt_line = linecache.getline(str(self.tgt_file), index).rstrip("\n")
         assert source_line, f"empty source line for index {index}"
         assert tgt_line, f"empty tgt line for index {index}"
-        return {"tgt_texts": tgt_line, "src_texts": source_line, "id": index - 1}
+        return {"tgt_texts": tgt_line, "src_texts": source_line, "id": index - 1, "who_says": who_says}
+
+    def get_who_says(self, source_line: str) -> List[str]:
+        tokens = source_line.strip().split()
+        new_utt = True
+        who_says = []
+        for token in tokens:
+            if new_utt:
+                who_says.append(token)
+                new_utt = False
+            if token == "<eou>":
+                new_utt = True
+        return who_says
 
     def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
         """Call prepare_seq2seq_batch."""
@@ -257,8 +270,53 @@ class Seq2SeqDataset(AbstractSeq2SeqDataset):
             **self.dataset_kwargs,
         ).data
         batch_encoding["ids"] = torch.tensor([x["id"] for x in batch])
+
+        eou_ids = self.tokenizer.convert_tokens_to_ids(["Ġ<", "e", "ou", ">"])
+        batch_encoding["user_mask"], batch_encoding["seg_mask"] = self.construct_extra_mask(
+            [x["who_says"] for x in batch],
+            eou_ids,
+            batch_encoding["input_ids"],
+            batch_encoding["attention_mask"]
+        )
+
         return batch_encoding
 
+    def construct_extra_mask(self, who_says: List[List[str]], eou_ids: List[int],
+                            input_ids: torch.Tensor, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert eou_ids == [28696, 242, 1438, 15698]
+        batch_size, seq_len = input_ids.shape
+
+        user_mask_list, seg_mask_list = [], []
+        for sample_idx in range(batch_size):
+            who_say = who_says[sample_idx]
+            id2user = list(set(who_say))
+            user2id = {user: idx for idx, user in enumerate(id2user)}
+            current_utt = 0
+            token_user_lst = []
+            token_seg_lst = []
+            state = 0
+            for token_idx, token_id in enumerate(input_ids[sample_idx]):
+                token_seg_lst.append(current_utt)
+                token_user_lst.append(user2id[who_say[current_utt]] if current_utt < len(who_say) else 0)
+                if token_id.item() == eou_ids[state]:
+                    state += 1
+                    if state == 4:
+                        current_utt += 1
+                        state = 0
+                elif token_id.item() == eou_ids[0]:
+                    state = 1
+                else:
+                    state = 0
+            token_user_tensor = torch.tensor(token_user_lst)
+            token_seg_tensor = torch.tensor(token_seg_lst)
+            assert len(token_user_tensor) == len(token_seg_tensor) == len(input_ids[sample_idx])
+            user_row_expand = token_user_tensor.unsqueeze(dim=0).expand(seq_len, seq_len)
+            user_col_expand = token_user_tensor.unsqueeze(dim=1).expand(seq_len, seq_len)
+            seg_row_expand = token_seg_tensor.unsqueeze(dim=0).expand(seq_len, seq_len)
+            seg_col_expand = token_seg_tensor.unsqueeze(dim=1).expand(seq_len, seq_len)
+            user_mask_list.append((user_row_expand == user_col_expand).to(dtype=attention_mask.dtype))
+            seg_mask_list.append((seg_row_expand == seg_col_expand).to(dtype=attention_mask.dtype))
+        return torch.stack(user_mask_list, dim=0) * attention_mask, torch.stack(seg_mask_list, dim=0) * attention_mask
 
 class Seq2SeqDataCollator:
     def __init__(self, tokenizer, data_args, tpu_num_cores=None):
