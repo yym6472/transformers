@@ -259,7 +259,10 @@ class EncoderLayer(nn.Module):
         self.fc2 = nn.Linear(config.encoder_ffn_dim, self.embed_dim)
         self.final_layer_norm = LayerNorm(self.embed_dim)
 
-    def forward(self, x, encoder_padding_mask, output_attentions=False):
+    def forward(self, x, encoder_padding_mask, output_attentions=False,
+                in_utter_mask: Optional[Tensor] = None,
+                self_self_mask: Optional[Tensor] = None,
+                self_other_mask: Optional[Tensor] = None):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -275,7 +278,10 @@ class EncoderLayer(nn.Module):
         if self.normalize_before:
             x = self.self_attn_layer_norm(x)
         x, attn_weights = self.self_attn(
-            query=x, key=x, key_padding_mask=encoder_padding_mask, output_attentions=output_attentions
+            query=x, key=x, key_padding_mask=encoder_padding_mask, output_attentions=output_attentions,
+            in_utter_mask=in_utter_mask,
+            self_self_mask=self_self_mask,
+            self_other_mask=self_other_mask
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = residual + x
@@ -336,7 +342,10 @@ class BartEncoder(nn.Module):
         self.layer_norm = LayerNorm(config.d_model) if config.add_final_layer_norm else None
 
     def forward(
-        self, input_ids, attention_mask=None, output_attentions=False, output_hidden_states=False, return_dict=False
+        self, input_ids, attention_mask=None, output_attentions=False, output_hidden_states=False, return_dict=False,
+        in_utter_mask: Optional[Tensor] = None,
+        self_self_mask: Optional[Tensor] = None,
+        self_other_mask: Optional[Tensor] = None
     ):
         """
         Args:
@@ -376,7 +385,10 @@ class BartEncoder(nn.Module):
             if self.training and (dropout_probability < self.layerdrop):  # skip the layer
                 attn = None
             else:
-                x, attn = encoder_layer(x, attention_mask, output_attentions=output_attentions)
+                x, attn = encoder_layer(x, attention_mask, output_attentions=output_attentions, 
+                        in_utter_mask=in_utter_mask,
+                        self_self_mask=self_self_mask,
+                        self_other_mask=self_other_mask)
 
             if output_attentions:
                 all_attentions = all_attentions + (attn,)
@@ -686,6 +698,9 @@ class Attention(nn.Module):
         layer_state: Optional[Dict[str, Optional[Tensor]]] = None,
         attn_mask: Optional[Tensor] = None,
         output_attentions=False,
+        in_utter_mask: Optional[Tensor] = None,
+        self_self_mask: Optional[Tensor] = None,
+        self_other_mask: Optional[Tensor] = None
     ) -> Tuple[Tensor, Optional[Tensor]]:
         """Input shape: Time(SeqLen) x Batch x Channel"""
         static_kv: bool = self.encoder_decoder_attention
@@ -733,6 +748,17 @@ class Attention(nn.Module):
         src_len = k.size(1)
         attn_weights = torch.bmm(q, k.transpose(1, 2))
         assert attn_weights.size() == (bsz * self.num_heads, tgt_len, src_len)
+        if in_utter_mask is not None: # In-Utterance Attention
+            in_utter_attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + in_utter_mask.unsqueeze(1)
+            in_utter_attn_weights = in_utter_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if self_self_mask is not None: # Self-Self Attention
+            self_self_attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + self_self_mask.unsqueeze(1)
+            self_self_attn_weights = self_self_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if self_other_mask is not None: # Self-Other Attention
+            self_other_attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + self_other_mask.unsqueeze(1)
+            self_other_attn_weights = self_other_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         if attn_mask is not None:
             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len) + attn_mask
@@ -751,15 +777,62 @@ class Attention(nn.Module):
             reshaped = key_padding_mask.unsqueeze(1).unsqueeze(2)
             attn_weights = attn_weights.masked_fill(reshaped, float("-inf"))
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+            if in_utter_mask is not None:  # In-Utterance Attention
+                in_utter_attn_weights = in_utter_attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+                in_utter_attn_weights = in_utter_attn_weights.masked_fill(reshaped, float("-inf"))
+                in_utter_attn_weights = in_utter_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+            if self_self_mask is not None:  # Self-Self Attention
+                self_self_attn_weights = self_self_attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+                self_self_attn_weights = self_self_attn_weights.masked_fill(reshaped, float("-inf"))
+                self_self_attn_weights = self_self_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+            if self_other_mask is not None:  # Self-Other Attention
+                self_other_attn_weights = self_other_attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+                self_other_attn_weights = self_other_attn_weights.masked_fill(reshaped, float("-inf"))
+                self_other_attn_weights = self_other_attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
         attn_weights = F.softmax(attn_weights, dim=-1)
         attn_probs = F.dropout(
             attn_weights,
             p=self.dropout,
             training=self.training,
         )
-
         assert v is not None
         attn_output = torch.bmm(attn_probs, v)
+
+        if in_utter_mask is not None:  # In-Utterance Attention
+            in_utter_attn_weights = F.softmax(in_utter_attn_weights, dim=-1)
+            in_utter_attn_probs = F.dropout(
+                in_utter_attn_weights,
+                p=self.dropout,
+                training=self.training,
+            )
+            assert v is not None
+            in_utter_attn_output = torch.bmm(in_utter_attn_probs, v)
+        if self_self_mask is not None:  # Self-Self Attention
+            self_self_attn_weights = F.softmax(self_self_attn_weights, dim=-1)
+            self_self_attn_weights = F.dropout(
+                self_self_attn_weights,
+                p=self.dropout,
+                training=self.training,
+            )
+            assert v is not None
+            self_self_attn_output = torch.bmm(self_self_attn_weights, v)
+        if self_other_mask is not None:  # Self-Other Attention
+            self_other_attn_weights = F.softmax(self_other_attn_weights, dim=-1)
+            self_other_attn_weights = F.dropout(
+                self_other_attn_weights,
+                p=self.dropout,
+                training=self.training,
+            )
+            assert v is not None
+            self_other_attn_output = torch.bmm(self_other_attn_weights, v)
+
+        if in_utter_mask is not None and self_self_mask is not None and self_other_mask is not None:
+            attn_output = attn_output*0 + in_utter_attn_output*0.2 + self_self_attn_output*0.4 + self_other_attn_output*0.4
+
         assert attn_output.size() == (bsz * self.num_heads, tgt_len, self.head_dim)
         attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
         attn_output = self.out_proj(attn_output)
@@ -887,8 +960,8 @@ class BartModel(PretrainedBartModel):
         self.shared = nn.Embedding(vocab_size, config.d_model, padding_idx)
 
         self.encoder = BartEncoder(config, self.shared)
-        self.extra_mask_layer = ExtraMaskLayer(config.d_model, config.d_model * 4, config.encoder_attention_heads,
-                config.d_model // config.encoder_attention_heads, config.d_model // config.encoder_attention_heads)
+        # self.extra_mask_layer = ExtraMaskLayer(config.d_model, config.d_model * 4, config.encoder_attention_heads,
+        #         config.d_model // config.encoder_attention_heads, config.d_model // config.encoder_attention_heads)
         self.decoder = BartDecoder(config, self.shared)
 
         self.init_weights()
@@ -947,6 +1020,9 @@ class BartModel(PretrainedBartModel):
 
         assert decoder_input_ids is not None
 
+        if user_mask is not None and seg_mask is not None:
+            other_user_mask = (user_mask == 0).to(dtype=user_mask.dtype) * attention_mask
+
         if encoder_outputs is None:
             encoder_outputs = self.encoder(
                 input_ids=input_ids,
@@ -954,6 +1030,9 @@ class BartModel(PretrainedBartModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
+                in_utter_mask=seg_mask,
+                self_self_mask=user_mask,
+                self_other_mask=other_user_mask,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOuput when return_dict=False
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
@@ -963,9 +1042,7 @@ class BartModel(PretrainedBartModel):
                 attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
             )
 
-        if user_mask is not None and seg_mask is not None:
-            other_user_mask = (user_mask == 0).to(dtype=user_mask.dtype) * attention_mask
-            encoder_outputs = self.extra_mask_layer(encoder_outputs[0], attention_mask, seg_mask, user_mask, other_user_mask)
+        #     encoder_outputs = self.extra_mask_layer(encoder_outputs[0], attention_mask, seg_mask, user_mask, other_user_mask)
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(

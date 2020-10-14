@@ -382,6 +382,10 @@ def main(args, model=None) -> SummarizationModule:
             model: SummarizationModule = SummarizationModule(args)
         else:
             model: SummarizationModule = TranslationModule(args)
+    for name, param in model.named_parameters():
+        # if "extra_mask_layer" not in name:
+        #     param.requires_grad_(False)
+        print(name, param.shape, param.requires_grad)
     dataset = Path(args.data_dir).name
     if (
         args.logger_name == "default"
