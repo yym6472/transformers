@@ -316,7 +316,8 @@ class Seq2SeqDataset(AbstractSeq2SeqDataset):
             seg_col_expand = token_seg_tensor.unsqueeze(dim=1).expand(seq_len, seq_len)
             user_mask_list.append((user_row_expand == user_col_expand).to(dtype=attention_mask.dtype))
             seg_mask_list.append((seg_row_expand == seg_col_expand).to(dtype=attention_mask.dtype))
-        return torch.stack(user_mask_list, dim=0) * attention_mask, torch.stack(seg_mask_list, dim=0) * attention_mask
+        square_attention_mask = attention_mask.unsqueeze(dim=1) * attention_mask.unsqueeze(dim=2)
+        return torch.stack(user_mask_list, dim=0) * square_attention_mask, torch.stack(seg_mask_list, dim=0) * square_attention_mask
 
 class Seq2SeqDataCollator:
     def __init__(self, tokenizer, data_args, tpu_num_cores=None):
