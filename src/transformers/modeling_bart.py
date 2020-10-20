@@ -831,7 +831,7 @@ class Attention(nn.Module):
             self_other_attn_output = torch.bmm(self_other_attn_weights, v)
 
         if in_utter_mask is not None and self_self_mask is not None and self_other_mask is not None:
-            attn_output = attn_output*0 + in_utter_attn_output*0.2 + self_self_attn_output*0.5 + self_other_attn_output*0.3
+            attn_output = attn_output*0.0 + in_utter_attn_output*0.2 + self_self_attn_output*0.8 + self_other_attn_output*0
 
         assert attn_output.size() == (bsz * self.num_heads, tgt_len, self.head_dim)
         attn_output = attn_output.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
@@ -960,8 +960,8 @@ class BartModel(PretrainedBartModel):
         self.shared = nn.Embedding(vocab_size, config.d_model, padding_idx)
 
         self.encoder = BartEncoder(config, self.shared)
-        self.extra_mask_layer = ExtraMaskLayer(config.d_model, config.d_model * 4, config.encoder_attention_heads,
-                config.d_model // config.encoder_attention_heads, config.d_model // config.encoder_attention_heads)
+        # self.extra_mask_layer = ExtraMaskLayer(config.d_model, config.d_model * 4, config.encoder_attention_heads,
+        #         config.d_model // config.encoder_attention_heads, config.d_model // config.encoder_attention_heads)
         self.decoder = BartDecoder(config, self.shared)
 
         self.init_weights()
